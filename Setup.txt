@@ -1,0 +1,618 @@
+/project-root
+|-- server.js
+|-- app.js
+|-- routes/
+|   |-- riskReferenceRoutes.js
+|   |-- entitlementRoutes.js
+|-- controllers/
+|   |-- riskReferenceController.js
+|   |-- entitlementController.js
+|-- services/
+|   |-- riskReferenceService.js
+|   |-- entitlementService.js
+|-- database/
+|   |-- riskReferenceDB.js
+|   |-- entitlementDB.js
+|-- utils/
+|   |-- logger.js
+|-- validators/
+|   |-- riskReferenceValidator.js
+|   |-- entitlementValidator.js
+|-- __tests__/
+|   |-- riskReferenceService.test.js
+|   |-- entitlementService.test.js
+|-- jest.config.js
+
+Server.js 
+-----------------------------------------------------
+const http = require('http');
+const app = require('./app');
+const logger = require('./utils/logger');
+
+const port = process.env.PORT || 3000;
+
+const server = http.createServer(app);
+
+server.listen(port, () => {
+  logger.info(`Server running on port ${port}`);
+});
+
+App.js
+-----------------------------------------
+const express = require('express');
+const bodyParser = require('body-parser');
+const riskReferenceRoutes = require('./routes/riskReferenceRoutes');
+const entitlementRoutes = require('./routes/entitlementRoutes');
+const logger = require('./utils/logger');
+
+const app = express();
+app.use(bodyParser.json());
+
+// Middleware to log requests
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.url}`);
+  next();
+});
+
+// Routes
+app.use('/riskreference', riskReferenceRoutes);
+app.use('/entitlement', entitlementRoutes);
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  logger.error(err.message);
+  res.status(500).json({ error: err.message });
+});
+
+module.exports = app;
+
+routes/RiskReference 
+---------------------------------------------
+
+const express = require('express');
+const riskReferenceController = require('../controllers/riskReferenceController');
+const riskReferenceValidator = require('../validators/riskReferenceValidator');
+
+const router = express.Router();
+
+router.get('/', riskReferenceController.getAll);
+router.get('/:id', riskReferenceValidator.validateGetById, riskReferenceController.getById);
+router.post('/', riskReferenceValidator.validateCreate, riskReferenceController.create);
+router.put('/:id', riskReferenceValidator.validateUpdate, riskReferenceController.update);
+router.delete('/:id', riskReferenceValidator.validateDelete, riskReferenceController.remove);
+
+module.exports = router;
+
+
+routes/entitlement.js 
+----------------------------------------------------
+const express = require('express');
+const entitlementController = require('../controllers/entitlementController');
+const entitlementValidator = require('../validators/entitlementValidator');
+
+const router = express.Router();
+
+router.get('/', entitlementController.getAll);
+router.get('/:id', entitlementValidator.validateGetById, entitlementController.getById);
+router.post('/', entitlementValidator.validateCreate, entitlementController.create);
+router.put('/:id', entitlementValidator.validateUpdate, entitlementController.update);
+router.delete('/:id', entitlementValidator.validateDelete, entitlementController.remove);
+
+module.exports = router;
+
+controller/Risk
+---------------------------------------------------------------
+
+const riskReferenceService = require('../services/riskReferenceService');
+const logger = require('../utils/logger');
+
+exports.getAll = async (req, res, next) => {
+  try {
+    const result = await riskReferenceService.getAll();
+    res.json(result);
+  } catch (error) {
+    logger.error(`Error in getAll: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.getById = async (req, res, next) => {
+  try {
+    const result = await riskReferenceService.getById(req.params.id);
+    res.json(result);
+  } catch (error) {
+    logger.error(`Error in getById: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.create = async (req, res, next) => {
+  try {
+    const result = await riskReferenceService.create(req.body);
+    res.status(201).json(result);
+  } catch (error) {
+    logger.error(`Error in create: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.update = async (req, res, next) => {
+  try {
+    const result = await riskReferenceService.update(req.params.id, req.body);
+    res.json(result);
+  } catch (error) {
+    logger.error(`Error in update: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.remove = async (req, res, next) => {
+  try {
+    await riskReferenceService.remove(req.params.id);
+    res.status(204).send();
+  } catch (error) {
+    logger.error(`Error in remove: ${error.message}`);
+    next(error);
+  }
+};
+
+controller/entitlementController 
+------------------------------------------------------------------
+const entitlementService = require('../services/entitlementService');
+const logger = require('../utils/logger');
+
+exports.getAll = async (req, res, next) => {
+  try {
+    const result = await entitlementService.getAll();
+    res.json(result);
+  } catch (error) {
+    logger.error(`Error in getAll: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.getById = async (req, res, next) => {
+  try {
+    const result = await entitlementService.getById(req.params.id);
+    res.json(result);
+  } catch (error) {
+    logger.error(`Error in getById: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.create = async (req, res, next) => {
+  try {
+    const result = await entitlementService.create(req.body);
+    res.status(201).json(result);
+  } catch (error) {
+    logger.error(`Error in create: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.update = async (req, res, next) => {
+  try {
+    const result = await entitlementService.update(req.params.id, req.body);
+    res.json(result);
+  } catch (error) {
+    logger.error(`Error in update: ${error.message}`);
+    next(error);
+  }
+};
+
+exports.remove = async (req, res, next) => {
+  try {
+    await entitlementService.remove(req.params.id);
+    res.status(204).send();
+  } catch (error) {
+    logger.error(`Error in remove: ${error.message}`);
+    next(error);
+  }
+};
+
+
+service/RiskReference 
+------------------------------------------
+const riskReferenceDB = require('../database/riskReferenceDB');
+const logger = require('../utils/logger');
+
+exports.getAll = async () => {
+  try {
+    return await riskReferenceDB.getAll();
+  } catch (error) {
+    logger.error(`Service getAll error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.getById = async (id) => {
+  try {
+    return await riskReferenceDB.getById(id);
+  } catch (error) {
+    logger.error(`Service getById error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.create = async (data) => {
+  try {
+    return await riskReferenceDB.create(data);
+  } catch (error) {
+    logger.error(`Service create error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.update = async (id, data) => {
+  try {
+    return await riskReferenceDB.update(id, data);
+  } catch (error) {
+    logger.error(`Service update error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.remove = async (id) => {
+  try {
+    return await riskReferenceDB.remove(id);
+  } catch (error) {
+    logger.error(`Service remove error: ${error.message}`);
+    throw error;
+  }
+};
+
+services/entitlementService 
+-----------------------------------------------------
+
+const entitlementDB = require('../database/entitlementDB');
+const logger = require('../utils/logger');
+
+exports.getAll = async () => {
+  try {
+    return await entitlementDB.getAll();
+  } catch (error) {
+    logger.error(`Service getAll error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.getById = async (id) => {
+  try {
+    return await entitlementDB.getById(id);
+  } catch (error) {
+    logger.error(`Service getById error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.create = async (data) => {
+  try {
+    return await entitlementDB.create(data);
+  } catch (error) {
+    logger.error(`Service create error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.update = async (id, data) => {
+  try {
+    return await entitlementDB.update(id, data);
+  } catch (error) {
+    logger.error(`Service update error: ${error.message}`);
+    throw error;
+  }
+};
+
+exports.remove = async (id) => {
+  try {
+    return await entitlementDB.remove(id);
+  } catch (error) {
+    logger.error(`Service remove error: ${error.message}`);
+    throw error;
+  }
+};
+
+const sql = require("msnodesqlv8");
+const connectionString = "Server=(localDb)\\test; Database=RiskReference; Trusted_Connection=Yes; Driver={ODBC Driver 17 for SQL Server}";
+
+async function queryDatabase(query, params = []) {
+  return new Promise((resolve, reject) => {
+    sql.query(connectionString, query, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+}
+
+database/riskReferenceDb 
+-------------------------------------------------------------------
+
+const sql = require("msnodesqlv8");
+const connectionString = "Server=(localDb)\\test; Database=RiskReference; Trusted_Connection=Yes; Driver={ODBC Driver 17 for SQL Server}";
+
+async function queryDatabase(query, params = []) {
+  return new Promise((resolve, reject) => {
+    sql.query(connectionString, query, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+}
+
+exports.getAll = async () => {
+  const query = "SELECT * FROM RiskReference";
+  return await queryDatabase(query);
+};
+
+exports.getById = async (id) => {
+  const query = "SELECT * FROM RiskReference WHERE Id = ?";
+  return await queryDatabase(query, [id]);
+};
+
+exports.create = async (data) => {
+  const query = "INSERT INTO RiskReference (Permission, RiskTier) VALUES (?, ?)";
+  return await queryDatabase(query, [data.Permission, data.RiskTier]);
+};
+
+exports.update = async (id, data) => {
+  const query = "UPDATE RiskReference SET Permission = ?, RiskTier = ? WHERE Id = ?";
+  return await queryDatabase(query, [data.Permission, data.RiskTier, id]);
+};
+
+exports.remove = async (id) => {
+  const query = "DELETE FROM RiskReference WHERE Id = ?";
+  return await queryDatabase(query, [id]);
+};
+
+
+database/entitlementDB.js 
+---------------------------------------------------------
+
+
+const sql = require("msnodesqlv8");
+const connectionString = "Server=(localDb)\\test; Database=RiskReference; Trusted_Connection=Yes; Driver={ODBC Driver 17 for SQL Server}";
+
+async function queryDatabase(query, params = []) {
+  return new Promise((resolve, reject) => {
+    sql.query(connectionString, query, params, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows);
+      }
+    });
+  });
+}
+
+exports.getAll = async () => {
+  const query = "SELECT * FROM Entitlement";
+  return await queryDatabase(query);
+};
+
+exports.getById = async (id) => {
+  const query = "SELECT * FROM Entitlement WHERE Id = ?";
+  return await queryDatabase(query, [id]);
+};
+
+exports.create = async (data) => {
+  const query = "INSERT INTO Entitlement (entName, pbl, RiskTier) VALUES (?, ?, ?)";
+  return await queryDatabase(query, [data.entName, data.pbl, data.RiskTier]);
+};
+
+exports.update = async (id, data) => {
+  const query = "UPDATE Entitlement SET entName = ?, pbl = ?, RiskTier = ? WHERE Id = ?";
+  return await queryDatabase(query, [data.entName, data.pbl, data.RiskTier, id]);
+};
+
+exports.remove = async (id) => {
+  const query = "DELETE FROM Entitlement WHERE Id = ?";
+  return await queryDatabase(query, [id]);
+};
+
+
+utils/logger.js 
+-----------------------------------------------
+
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.json(),
+  transports: [
+    new winston.transports.Console({ format: winston.format.simple() }),
+    new winston.transports.File({ filename: 'app.log' })
+  ]
+});
+
+module.exports = logger;
+
+validator/riskRefernec.js 
+------------------------------------------------
+
+const { body, param, validationResult } = require('express-validator');
+
+exports.validateCreate = [
+  body('Permission').isString().withMessage('Permission must be a string'),
+  body('RiskTier').isInt({ min: 1 }).withMessage('RiskTier must be an integer greater than 0'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+exports.validateUpdate = [
+  param('id').isInt().withMessage('Id must be an integer'),
+  body('Permission').isString().withMessage('Permission must be a string'),
+  body('RiskTier').isInt({ min: 1 }).withMessage('RiskTier must be an integer greater than 0'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+exports.validateGetById = [
+  param('id').isInt().withMessage('Id must be an integer'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+exports.validateDelete = [
+  param('id').isInt().withMessage('Id must be an integer'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+
+
+validator/entitlementValidator.js 
+const { body, param, validationResult } = require('express-validator');
+
+exports.validateCreate = [
+  body('entName').isString().withMessage('entName must be a string'),
+  body('pbl').isString().withMessage('pbl must be a string'),
+  body('RiskTier').isInt({ min: 1 }).withMessage('RiskTier must be an integer greater than 0'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+exports.validateUpdate = [
+  param('id').isInt().withMessage('Id must be an integer'),
+  body('entName').isString().withMessage('entName must be a string'),
+  body('pbl').isString().withMessage('pbl must be a string'),
+  body('RiskTier').isInt({ min: 1 }).withMessage('RiskTier must be an integer greater than 0'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+exports.validateGetById = [
+  param('id').isInt().withMessage('Id must be an integer'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+exports.validateDelete = [
+  param('id').isInt().withMessage('Id must be an integer'),
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    next();
+  }
+];
+
+
+jestConfig.js 
+------------------------------------------------
+module.exports = {
+  testEnvironment: 'node',
+  verbose: true,
+  collectCoverage: true,
+  coverageDirectory: "coverage",
+  testPathIgnorePatterns: ["/node_modules/"]
+};
+
+tests/riskReferenceService.test.js
+--------------------------------------------------------
+const riskReferenceService = require('../services/riskReferenceService');
+const riskReferenceDB = require('../database/riskReferenceDB');
+
+// Mock the database functions
+jest.mock('../database/riskReferenceDB');
+
+describe('RiskReference Service', () => {
+  describe('getAll', () => {
+    it('should return all risk references', async () => {
+      const mockData = [{ Permission: 'Read', RiskTier: 1 }];
+      riskReferenceDB.getAll.mockResolvedValue(mockData);
+      
+      const result = await riskReferenceService.getAll();
+      expect(result).toEqual(mockData);
+      expect(riskReferenceDB.getAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw an error if db call fails', async () => {
+      const errorMessage = 'DB error';
+      riskReferenceDB.getAll.mockRejectedValue(new Error(errorMessage));
+
+      await expect(riskReferenceService.getAll()).rejects.toThrow(errorMessage);
+    });
+  });
+
+  // Add similar tests for other methods (getById, create, update, remove)
+});
+  
+
+tests/entitlementService.test.js
+-------------------------------------------------------------
+const entitlementService = require('../services/entitlementService');
+const entitlementDB = require('../database/entitlementDB');
+
+// Mock the database functions
+jest.mock('../database/entitlementDB');
+
+describe('Entitlement Service', () => {
+  describe('getAll', () => {
+    it('should return all entitlements', async () => {
+      const mockData = [{ Id: 1, entName: 'Ent1', pbl: 'PBL1', RiskTier: 1 }];
+      entitlementDB.getAll.mockResolvedValue(mockData);
+      
+      const result = await entitlementService.getAll();
+      expect(result).toEqual(mockData);
+      expect(entitlementDB.getAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw an error if db call fails', async () => {
+      const errorMessage = 'DB error';
+      entitlementDB.getAll.mockRejectedValue(new Error(errorMessage));
+
+      await expect(entitlementService.getAll()).rejects.toThrow(errorMessage);
+    });
+  });
+
+  // Add similar tests for other methods (getById, create, update, remove)
+});
+
+
+
+
+
+
