@@ -613,6 +613,61 @@ describe('Entitlement Service', () => {
 
 
 
+Email Notification 
+node mailer setup 
+
+const nodemailer = require("nodemailer");
+const path = require("path");
+
+const transporter = nodemailer.createTransport({
+    service: "gmail",
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // Use `true` for port 465, `false` for all other ports
+    auth: {
+      user: "hypnotic399@gmail.com",
+      pass: "wbrd dxvs lbmv prug",
+    },
+  });
+
+  const mailOptions = {
+    from:{
+        name: "Rakshit",
+        address: "hypnotic399@gmail.com",
+    },
+    to: ["rakshitbang0005@gmail.com", "rakshitbang555@gmail.com"],
+    subject: "Email Notification Feature Check",
+    text: "Hellow World ?",
+    html: "<h1>Hello World</h1>",
+    attachments: [
+        {
+            filename : 'assgn.pdf',
+            path : path.join(__dirname, 'assgn.pdf'),
+            contentType: 'application/pdf',
+        },
+        {
+            filename: 'img.png',
+            path: path.join(__dirname, 'img.png'),
+            contentType: 'image/png',
+        }
+    ],
+  }
+
+  const sendEmail = async (transporter, mailOptions) =>{
+    try{
+        await transporter.sendMail(mailOptions);
+        console.log("Email Sent !");
+    
+    }catch(e){
+        console.log(error);
+    }
+  }
+  sendEmail(transporter, mailOptions);
+
+
+
+
+
 
 
 
