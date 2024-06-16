@@ -665,6 +665,377 @@ const transporter = nodemailer.createTransport({
   sendEmail(transporter, mailOptions);
 
 
+--------------------------------------------------------------------------------------------------------------------
+
+const entitlementDB = require('../database/entitlementDB');
+const logger = require('../utils/logger');
+const sql = require('mssql');
+
+const BATCH_SIZE = 1000;
+
+async function fetchEntitlementIdsByPermission(permissionId) {
+  const query = `
+    SELECT EntitlementID
+    FROM EntitlementPermissions
+    WHERE PermissionID = @PermissionID
+  `;
+  const request = new sql.Request();
+  request.input('PermissionID', sql.Int, permissionId);
+  return await request.query(query);
+}
+
+async function updateEntitlementFlags(entitlementIds) {
+  const query = `
+    UPDATE Entitlements
+    SET Requestable = 0
+    WHERE EntitlementID IN (${entitlementIds.map(id => `'${id}'`).join(', ')})
+  `;
+  const request = new sql.Request();
+  return await request.query(query);
+}
+
+exports.flagEntitlementsByPermission = async (permissionId) => {
+  const transaction = new sql.Transaction();
+
+  try {
+    await transaction.begin();
+
+    // Fetch entitlement IDs for the given permission
+    const entitlementIdsResult = await fetchEntitlementIdsByPermission(permissionId);
+    const entitlementIds = entitlementIdsResult.recordset.map(record => record.EntitlementID);
+
+    // Process IDs in batches
+    for (let i = 0; i < entitlementIds.length; i += BATCH_SIZE) {
+      const batchIds = entitlementIds.slice(i, i + BATCH_SIZE);
+      await updateEntitlementFlags(batchIds);
+    }
+
+    await transaction.commit();
+    logger.info(`Successfully flagged entitlements for permission ID ${permissionId}`);
+  } catch (error) {
+    await transaction.rollback();
+    logger.error(`Error flagging entitlements for permission ID ${permissionId}: ${error.message}`);
+    throw error;
+  }
+};
+
+
+const entitlementDB = require('../database/entitlementDB');
+const riskReferenceDB = require('../database/riskReferenceDB');
+const logger = require('../utils/logger');
+const axios = require('axios');
+const NodeCache = require('node-cache');
+
+const cache = new NodeCache({ stdTTL: 600 });
+
+const BATCH_SIZE = 1000;
+
+async function fetchPermissionsRiskTiersFromPython(permissions) {
+  try {
+    const response = await axios.post('http://localhost:5000/permissionsRiskTiers', { permissions });
+    return response.data;
+  } catch (error) {
+    logger.error(`Error in fetchPermissionsRiskTiersFromPython: ${error.message}`);
+    throw error;
+  }
+}
+
+async function fetchRiskReferences() {
+  const cachedRiskReferences = cache.get('riskReferences');
+  if (cachedRiskReferences) {
+    return cachedRiskReferences;
+  }
+  const riskReferences = await riskReferenceDB.getAll();
+  cache.set('riskReferences', riskReferences);
+  return riskReferences;
+}
+
+async function fetchEntitlementsWithPermissions(batchStart, batchSize) {
+  const query = `
+    SELECT e.EntitlementID, e.PBL, e.RiskTier, e.Requestable, ep.PermissionID
+    FROM Entitlements e
+    JOIN EntitlementPermissions ep ON e.EntitlementID = ep.EntitlementID
+    ORDER BY e.EntitlementID
+    OFFSET ${batchStart} ROWS FETCH NEXT ${batchSize} ROWS ONLY
+  `;
+  return await entitlementDB.queryDatabase(query);
+}
+
+function identifyType1Anomalies(entitlements, dbRiskReferences, pythonRiskReferences) {
+  const type1Anomalies = new Set();
+  entitlements.forEach(entitlement => {
+    if (dbRiskReferences[entitlement.PermissionID] !== pythonRiskReferences[entitlement.PermissionID]) {
+      type1Anomalies.add(entitlement.PermissionID);
+    }
+  });
+  return type1Anomalies;
+}
+
+function identifyType2Anomalies(entitlements, pythonRiskReferences) {
+  const type2Anomalies = [];
+  const entitlementGroups = entitlements.reduce((acc, ent) => {
+    if (!acc[ent.EntitlementID]) {
+      acc[ent.EntitlementID] = {
+        ...ent,
+        permissions: []
+      };
+    }
+    acc[ent.EntitlementID].permissions.push(ent.PermissionID);
+    return acc;
+  }, {});
+
+  Object.values(entitlementGroups).forEach(ent => {
+    const minRiskTier = Math.min(...ent.permissions.map(p => pythonRiskReferences[p]));
+    if (minRiskTier !== ent.RiskTier) {
+      type2Anomalies.push(ent.EntitlementID);
+    }
+  });
+  return type2Anomalies;
+}
+
+exports.validateEntitlements = async (data) => {
+  const dbRiskReferences = await fetchRiskReferences();
+  const allPermissions = Object.keys(dbRiskReferences);
+
+  // Fetch risk tiers from Python script
+  const pythonRiskReferences = await fetchPermissionsRiskTiersFromPython(allPermissions);
+
+  // Identify Type 1 anomalies
+  const type1Anomalies = identifyType1Anomalies(allPermissions, dbRiskReferences, pythonRiskReferences);
+
+  let batchStart = 0;
+  let type2Anomalies = [];
+  const type1AnomalyIds = [];
+
+  // Process entitlements in batches
+  while (true) {
+    const entitlements = await fetchEntitlementsWithPermissions(batchStart, BATCH_SIZE);
+    if (entitlements.length === 0) break;
+
+    // Extract permissions for current batch
+    const batchPermissions = new Set(entitlements.map(ent => ent.PermissionID));
+
+    // Filter out entitlements with Type 1 anomalies
+    const validEntitlements = entitlements.filter(entitlement =>
+      !type1Anomalies.has(entitlement.PermissionID)
+    );
+
+    // Identify Type 2 anomalies
+    const batchType2Anomalies = identifyType2Anomalies(validEntitlements, pythonRiskReferences);
+    type2Anomalies = type2Anomalies.concat(batchType2Anomalies);
+
+    // Track Type 1 anomaly entitlements
+    entitlements.forEach(ent => {
+      if (type1Anomalies.has(ent.PermissionID)) {
+        type1AnomalyIds.push(ent.EntitlementID);
+      }
+    });
+
+    batchStart += BATCH_SIZE;
+  }
+
+  return { type1Anomalies: type1AnomalyIds, type2Anomalies };
+};
+
+--------------------------------------------------------------------------------------------------------------------
+
+const entitlementDB = require('../database/entitlementDB');
+const riskReferenceDB = require('../database/riskReferenceDB');
+const logger = require('../utils/logger');
+const axios = require('axios');
+const NodeCache = require('node-cache');
+
+const cache = new NodeCache({ stdTTL: 600 });
+
+const BATCH_SIZE = 1000;
+
+async function fetchPermissionsRiskTiersFromPython(permissions) {
+  try {
+    const response = await axios.post('http://localhost:5000/permissionsRiskTiers', { permissions });
+    return response.data;
+  } catch (error) {
+    logger.error(`Error in fetchPermissionsRiskTiersFromPython: ${error.message}`);
+    throw error;
+  }
+}
+
+async function fetchRiskReferences() {
+  const cachedRiskReferences = cache.get('riskReferences');
+  if (cachedRiskReferences) {
+    return cachedRiskReferences;
+  }
+  const riskReferences = await riskReferenceDB.getAll();
+  cache.set('riskReferences', riskReferences);
+  return riskReferences;
+}
+
+async function fetchEntitlements(batchStart, batchSize) {
+  const query = `SELECT * FROM Entitlement ORDER BY Id OFFSET ${batchStart} ROWS FETCH NEXT ${batchSize} ROWS ONLY`;
+  return await entitlementDB.queryDatabase(query);
+}
+
+function identifyType1Anomalies(permissions, dbRiskReferences, pythonRiskReferences) {
+  const type1Anomalies = new Set();
+  permissions.forEach(permission => {
+    if (dbRiskReferences[permission] !== pythonRiskReferences[permission]) {
+      type1Anomalies.add(permission);
+    }
+  });
+  return type1Anomalies;
+}
+
+function identifyType2Anomalies(entitlements, pythonRiskReferences) {
+  const type2Anomalies = [];
+  entitlements.forEach(entitlement => {
+    const minRiskTier = Math.min(...entitlement.permissions.map(p => pythonRiskReferences[p]));
+    if (minRiskTier !== entitlement.RiskTier) {
+      type2Anomalies.push(entitlement.Id);
+    }
+  });
+  return type2Anomalies;
+}
+
+exports.validateEntitlements = async (data) => {
+  const dbRiskReferences = await fetchRiskReferences();
+  const allPermissions = Object.keys(dbRiskReferences);
+
+  // Fetch risk tiers from Python script
+  const pythonRiskReferences = await fetchPermissionsRiskTiersFromPython(allPermissions);
+
+  // Identify Type 1 anomalies
+  const type1Anomalies = identifyType1Anomalies(allPermissions, dbRiskReferences, pythonRiskReferences);
+
+  let batchStart = 0;
+  let type2Anomalies = [];
+  const type1AnomalyIds = [];
+
+  // Process entitlements in batches
+  while (true) {
+    const entitlements = await fetchEntitlements(batchStart, BATCH_SIZE);
+    if (entitlements.length === 0) break;
+
+    // Extract permissions for current batch
+    const batchPermissions = new Set(entitlements.flatMap(ent => ent.permissions));
+
+    // Filter out entitlements with Type 1 anomalies
+    const validEntitlements = entitlements.filter(entitlement =>
+      !entitlement.permissions.some(permission => type1Anomalies.has(permission))
+    );
+
+    // Identify Type 2 anomalies
+    const batchType2Anomalies = identifyType2Anomalies(validEntitlements, pythonRiskReferences);
+    type2Anomalies = type2Anomalies.concat(batchType2Anomalies);
+
+    // Track Type 1 anomaly entitlements
+    entitlements.forEach(ent => {
+      if (ent.permissions.some(permission => type1Anomalies.has(permission))) {
+        type1AnomalyIds.push(ent.Id);
+      }
+    });
+
+    batchStart += BATCH_SIZE;
+  }
+
+  return { type1Anomalies: type1AnomalyIds, type2Anomalies };
+};
+
+
+
+----------------------------------------------------------------------------------------------------------
+
+
+const entitlementDB = require('../database/entitlementDB');
+const riskReferenceDB = require('../database/riskReferenceDB');
+const logger = require('../utils/logger');
+const axios = require('axios');
+const NodeCache = require('node-cache');
+const async = require('async');
+
+const cache = new NodeCache({ stdTTL: 600 });
+
+const BATCH_SIZE = 1000;
+
+async function fetchPermissionsRiskTiersFromPython(permissions) {
+  try {
+    const response = await axios.post('http://localhost:5000/permissionsRiskTiers', { permissions });
+    return response.data;
+  } catch (error) {
+    logger.error(`Error in fetchPermissionsRiskTiersFromPython: ${error.message}`);
+    throw error;
+  }
+}
+
+async function fetchRiskReferences() {
+  const cachedRiskReferences = cache.get('riskReferences');
+  if (cachedRiskReferences) {
+    return cachedRiskReferences;
+  }
+  const riskReferences = await riskReferenceDB.getAll();
+  cache.set('riskReferences', riskReferences);
+  return riskReferences;
+}
+
+async function fetchEntitlements(batchStart, batchSize) {
+  const query = `SELECT * FROM Entitlement ORDER BY Id OFFSET ${batchStart} ROWS FETCH NEXT ${batchSize} ROWS ONLY`;
+  return await entitlementDB.queryDatabase(query);
+}
+
+function identifyType1Anomalies(permissions, dbRiskReferences, pythonRiskReferences) {
+  const type1Anomalies = new Set();
+  permissions.forEach(permission => {
+    if (dbRiskReferences[permission] !== pythonRiskReferences[permission]) {
+      type1Anomalies.add(permission);
+    }
+  });
+  return type1Anomalies;
+}
+
+function identifyType2Anomalies(entitlements, pythonRiskReferences) {
+  const type2Anomalies = [];
+  entitlements.forEach(entitlement => {
+    const minRiskTier = Math.min(...entitlement.permissions.map(p => pythonRiskReferences[p]));
+    if (minRiskTier !== entitlement.RiskTier) {
+      type2Anomalies.push(entitlement.Id);
+    }
+  });
+  return type2Anomalies;
+}
+
+exports.validateEntitlements = async (data) => {
+  const dbRiskReferences = await fetchRiskReferences();
+  const allPermissions = Object.keys(dbRiskReferences);
+
+  // Fetch risk tiers from Python script
+  const pythonRiskReferences = await fetchPermissionsRiskTiersFromPython(allPermissions);
+
+  // Identify Type 1 anomalies
+  const type1Anomalies = identifyType1Anomalies(allPermissions, dbRiskReferences, pythonRiskReferences);
+
+  let batchStart = 0;
+  let type2Anomalies = [];
+
+  // Process entitlements in batches
+  while (true) {
+    const entitlements = await fetchEntitlements(batchStart, BATCH_SIZE);
+    if (entitlements.length === 0) break;
+
+    // Filter out entitlements with Type 1 anomalies
+    const validEntitlements = entitlements.filter(entitlement =>
+      !entitlement.permissions.some(permission => type1Anomalies.has(permission))
+    );
+
+    // Identify Type 2 anomalies
+    const batchType2Anomalies = identifyType2Anomalies(validEntitlements, pythonRiskReferences);
+    type2Anomalies = type2Anomalies.concat(batchType2Anomalies);
+
+    batchStart += BATCH_SIZE;
+  }
+
+  return { type1Anomalies: Array.from(type1Anomalies), type2Anomalies };
+};
+
+
+
 
 
 
